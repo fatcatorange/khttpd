@@ -194,7 +194,7 @@ int my_thread_run(void *socket)
     struct task_struct *tmp =
         kthread_run(http_server_worker, socket, KBUILD_MODNAME);
 
-    if (IS_ERR(worker)) {
+    if (IS_ERR(tmp)) {
         pr_err("can't  create more worker process\n");
         continue;
     }
