@@ -196,7 +196,6 @@ int my_thread_run(void *socket)
 
     if (IS_ERR(tmp)) {
         pr_err("can't  create more worker process\n");
-        continue;
     }
     return 0;
 }
