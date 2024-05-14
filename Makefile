@@ -1,5 +1,8 @@
 KDIR=/lib/modules/$(shell uname -r)/build
 
+CC = x86_64-linux-gnu-gcc-12
+
+
 CFLAGS_user = -std=gnu11 -Wall -Wextra -Werror
 LDFLAGS_user = -lpthread
 

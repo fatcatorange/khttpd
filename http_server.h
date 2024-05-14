@@ -9,4 +9,8 @@ struct http_server_param {
 
 extern int http_server_daemon(void *arg);
 
+extern int kthread_start_check(void);
+
+extern int kthread_end_check(void *data);
+
 #endif

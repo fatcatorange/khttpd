@@ -39,6 +39,8 @@ struct http_request {
     int complete;
 };
 
+
+
 static int http_server_recv(struct socket *sock, char *buf, size_t size)
 {
     struct kvec iov = {.iov_base = (void *) buf, .iov_len = size};
@@ -77,7 +79,7 @@ static int http_server_response(struct http_request *request, int keep_alive)
 {
     char *response;
 
-    pr_info("requested_url = %s\n", request->request_url);
+    // pr_info("requested_url = %s\n", request->request_url);
     if (request->method != HTTP_GET)
         response = keep_alive ? HTTP_RESPONSE_501_KEEPALIVE : HTTP_RESPONSE_501;
     else
@@ -141,7 +143,7 @@ static int http_parser_callback_message_complete(http_parser *parser)
     return 0;
 }
 
-static int http_server_worker(void *arg)
+int http_server_worker(void *arg)
 {
     char *buf;
     struct http_parser parser;
@@ -170,6 +172,7 @@ static int http_server_worker(void *arg)
     parser.data = &request;
     while (!kthread_should_stop()) {
         int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
+        printk("%s\n", buf);
         if (ret <= 0) {
             if (ret)
                 pr_err("recv error: %d\n", ret);
@@ -183,6 +186,18 @@ static int http_server_worker(void *arg)
     kernel_sock_shutdown(socket, SHUT_RDWR);
     sock_release(socket);
     kfree(buf);
+    return 0;
+}
+
+int my_thread_run(void *socket)
+{
+    struct task_struct *tmp =
+        kthread_run(http_server_worker, socket, KBUILD_MODNAME);
+
+    if (IS_ERR(worker)) {
+        pr_err("can't  create more worker process\n");
+        continue;
+    }
     return 0;
 }
 
@@ -203,9 +218,9 @@ int http_server_daemon(void *arg)
             pr_err("kernel_accept() error: %d\n", err);
             continue;
         }
-        worker = kthread_run(http_server_worker, socket, KBUILD_MODNAME);
+        worker = kthread_run(&my_thread_run, socket, KBUILD_MODNAME);
         if (IS_ERR(worker)) {
-            pr_err("can't create more worker process\n");
+            pr_err("can't  create more worker process\n");
             continue;
         }
     }
