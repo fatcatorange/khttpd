@@ -32,6 +32,7 @@
     "Connection: KeepAlive" CRLF CRLF "501 Not Implemented" CRLF
 
 #define RECV_BUFFER_SIZE 4096
+#define SEND_BUFFER_SIZE 256
 
 struct khttpd_service daemon_list = {.is_stopped = false};
 extern struct workqueue_struct *khttpd_wq;
@@ -42,6 +43,7 @@ struct http_request {
     enum http_method method;
     char request_url[128];
     int complete;
+    struct dir_context dir_context;
     struct list_head node;
     struct work_struct khttpd_work;
 };
@@ -74,7 +76,7 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
         };
         int length = kernel_sendmsg(sock, &msg, &iov, 1, iov.iov_len);
         if (length < 0) {
-            pr_err("write error: %d\n", length);
+            printk("write error: %d\n", length);
             break;
         }
         done += length;
@@ -82,17 +84,76 @@ static int http_server_send(struct socket *sock, const char *buf, size_t size)
     return done;
 }
 
+static _Bool tracedir(struct dir_context *dir_context,
+                      const char *name,
+                      int namelen,
+                      loff_t offset,
+                      u64 ino,
+                      unsigned int d_type)
+{
+    printk("%s\n", name);
+    if (strcmp(name, ".") && strcmp(name, "..")) {
+        struct http_request *request =
+            container_of(dir_context, struct http_request, dir_context);
+        char buf[SEND_BUFFER_SIZE] = {0};
+
+        snprintf(buf, SEND_BUFFER_SIZE,
+                 "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", name, name);
+        http_server_send(request->socket, buf, strlen(buf));
+        printk("%s\n", buf);
+    }
+    return 1;
+}
+
+static bool handle_directory(struct http_request *request)
+{
+    struct file *fp;
+    char buf[SEND_BUFFER_SIZE] = {0};
+
+    request->dir_context.actor = tracedir;
+    if (request->method != HTTP_GET) {
+        snprintf(buf, SEND_BUFFER_SIZE,
+                 "HTTP/1.1 501 Not Implemented\r\n%s%s%s%s",
+                 "Content-Type: text/plain\r\n", "Content-Length: 19\r\n",
+                 "Connection: Close\r\n", "501 Not Implemented\r\n");
+
+        http_server_send(request->socket, buf, strlen(buf));
+        return false;
+    }
+
+    snprintf(buf, SEND_BUFFER_SIZE, "HTTP/1.1 200 OK\r\n%s%s%s",
+             "Connection: Keep-Alive\r\n", "Content-Type: text/html\r\n",
+             "Keep-Alive: timeout=5, max=1000\r\n\r\n");
+    http_server_send(request->socket, buf, strlen(buf));
+
+    snprintf(buf, SEND_BUFFER_SIZE, "%s%s%s%s", "<html><head><style>\r\n",
+             "body{font-family: monospace; font-size: 15px;}\r\n",
+             "td {padding: 1.5px 6px;}\r\n",
+             "</style></head><body><table>\r\n");
+    http_server_send(request->socket, buf, strlen(buf));
+
+    fp = filp_open("/home/jason/linux-2024/khttpd/khttpd",
+                   O_RDONLY | O_DIRECTORY, 0);
+    if (IS_ERR(fp)) {
+        printk("open file failed");
+        return false;
+    }
+
+    iterate_dir(fp, &request->dir_context);
+    printk("finish iterate!");
+    snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
+    http_server_send(request->socket, buf, strlen(buf));
+    filp_close(fp, NULL);
+    return true;
+}
+
+
 static int http_server_response(struct http_request *request, int keep_alive)
 {
-    char *response;
-
     // pr_info("requested_url = %s\n", request->request_url);
-    if (request->method != HTTP_GET)
-        response = keep_alive ? HTTP_RESPONSE_501_KEEPALIVE : HTTP_RESPONSE_501;
-    else
-        response = keep_alive ? HTTP_RESPONSE_200_KEEPALIVE_DUMMY
-                              : HTTP_RESPONSE_200_DUMMY;
-    http_server_send(request->socket, response, strlen(response));
+    int ret = handle_directory(request);
+    if (ret > 0)
+        return -1;
     return 0;
 }
 
@@ -171,7 +232,7 @@ static void http_server_worker(struct work_struct *w)
 
     buf = kzalloc(RECV_BUFFER_SIZE, GFP_KERNEL);
     if (!buf) {
-        pr_err("can't allocate memory!\n");
+        printk("can't allocate memory!\n");
         return;
     }
 
@@ -183,7 +244,7 @@ static void http_server_worker(struct work_struct *w)
         printk("%s\n", buf);
         if (ret <= 0) {
             if (ret)
-                pr_err("recv error: %d\n", ret);
+                printk("recv error: %d\n", ret);
             break;
         }
         http_parser_execute(&parser, &setting, buf, ret);
@@ -245,7 +306,7 @@ int http_server_daemon(void *arg)
         if (err < 0) {
             if (signal_pending(current))
                 break;
-            pr_err("kernel_accept() error: %d\n", err);
+            printk("kernel_accept() error: %d\n", err);
             continue;
         }
 
