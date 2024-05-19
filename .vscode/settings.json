@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "*.inc": "c"
+        "*.inc": "c",
+        "http_server.h": "c",
+        "http_parser.h": "c"
     }
 }

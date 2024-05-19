@@ -10,6 +10,7 @@ struct http_server_param {
 struct khttpd_service {
     bool is_stopped;
     struct list_head head;
+    char *dir_path;
 };
 extern struct khttpd_service daemon_list;
 

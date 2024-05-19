@@ -14,6 +14,9 @@
 #define DEFAULT_PORT 8081
 #define DEFAULT_BACKLOG 100
 
+#define PATH_SIZE 100
+static char WWWROOT[PATH_SIZE] = {0};
+module_param_string(WWWROOT, WWWROOT, PATH_SIZE, 0);
 static ushort port = DEFAULT_PORT;
 module_param(port, ushort, S_IRUGO);
 static ushort backlog = DEFAULT_BACKLOG;
@@ -158,6 +161,8 @@ static void close_listen_socket(struct socket *socket)
 
 static int __init khttpd_init(void)
 {
+    daemon_list.dir_path = WWWROOT;
+    printk("%s\n", daemon_list.dir_path);
     int err = open_listen_socket(port, backlog, &listen_socket);
     if (err < 0) {
         pr_err("can't open listen socket\n");
