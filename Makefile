@@ -10,6 +10,7 @@ obj-m += khttpd.o
 khttpd-objs := \
 	http_parser.o \
 	http_server.o \
+	hash_content.o \
 	main.o
 
 GIT_HOOKS := .git/hooks/applied

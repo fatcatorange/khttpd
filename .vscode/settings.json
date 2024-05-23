@@ -2,6 +2,7 @@
     "files.associations": {
         "*.inc": "c",
         "http_server.h": "c",
-        "http_parser.h": "c"
+        "http_parser.h": "c",
+        "hash_content.h": "c"
     }
 }

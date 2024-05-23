@@ -9,6 +9,7 @@
 #include <net/sock.h>
 
 
+#include "hash_content.h"
 #include "http_server.h"
 
 #define DEFAULT_PORT 8081
@@ -161,6 +162,7 @@ static void close_listen_socket(struct socket *socket)
 
 static int __init khttpd_init(void)
 {
+    init_hash_table();
     daemon_list.dir_path = WWWROOT;
     printk("%s\n", daemon_list.dir_path);
     int err = open_listen_socket(port, backlog, &listen_socket);

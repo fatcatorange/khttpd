@@ -6,6 +6,7 @@
 #include <linux/sched/signal.h>
 #include <linux/tcp.h>
 
+#include "hash_content.h"
 #include "http_parser.h"
 #include "http_server.h"
 
@@ -111,6 +112,7 @@ static _Bool tracedir(struct dir_context *dir_context,
                  "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", des, name);
         http_server_send(request->socket, buf, strlen(buf));
     }
+
     return 1;
 }
 
@@ -192,7 +194,16 @@ static bool handle_directory(struct http_request *request)
                  "</style></head><body><table>\r\n");
         http_server_send(request->socket, buf, strlen(buf));
 
+        if (strcmp(request->request_url, ""))
+            snprintf(buf, SEND_BUFFER_SIZE,
+                     "<tr><td><a href=\"%s%s\">%s</a></td></tr>\r\n",
+                     request->request_url, "/..", "..");
+
+        http_server_send(request->socket, buf, strlen(buf));
         iterate_dir(fp, &request->dir_context);
+
+        hash_check(request->request_url);
+        hash_insert(request->request_url, buf);
 
         snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
         http_server_send(request->socket, buf, strlen(buf));
@@ -236,6 +247,8 @@ static int http_parser_callback_request_url(http_parser *parser,
                                             size_t len)
 {
     struct http_request *request = parser->data;
+    if (p[len - 1] == '/')
+        len--;
     strncat(request->request_url, p, len);
     return 0;
 }
