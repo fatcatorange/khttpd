@@ -1,6 +1,14 @@
 #include "hash_content.h"
 
+#define SEND_BUFFER_SIZE 256
+
 DEFINE_HASHTABLE(ht, 8);
+
+
+struct tag_content {
+    struct list_head tag_list;
+    char url[SEND_BUFFER_SIZE];
+};
 
 void init_hash_table(void)
 {
@@ -36,4 +44,23 @@ bool hash_check(const char *request, struct list_head **head)
 
     rcu_read_unlock();
     return false;
+}
+
+void hash_clear(void)
+{
+    struct hash_content *entry = NULL;
+    struct hlist_node *tmp = NULL;
+    struct tag_content *now;
+    struct tag_content *tag_temp;
+    unsigned int bucket;
+
+    hash_for_each_safe(ht, bucket, tmp, entry, node)
+    {
+        list_for_each_entry_safe (now, tag_temp, entry->head, tag_list) {
+            list_del(&now->tag_list);
+            kfree(now);
+        }
+        hash_del(&entry->node);
+        kfree(entry);
+    }
 }

@@ -184,6 +184,7 @@ static int __init khttpd_init(void)
 
 static void __exit khttpd_exit(void)
 {
+    hash_clear();
     send_sig(SIGTERM, http_server, 1);
     kthread_stop(http_server);
     close_listen_socket(listen_socket);
