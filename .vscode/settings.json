@@ -3,6 +3,12 @@
         "*.inc": "c",
         "http_server.h": "c",
         "http_parser.h": "c",
-        "hash_content.h": "c"
+        "hash_content.h": "c",
+        "array": "c",
+        "string": "c",
+        "string_view": "c",
+        "vector": "c",
+        "ranges": "c",
+        "span": "c"
     }
 }

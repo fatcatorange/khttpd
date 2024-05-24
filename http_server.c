@@ -49,6 +49,12 @@ struct http_request {
     struct dir_context dir_context;
     struct list_head node;
     struct work_struct khttpd_work;
+    struct list_head *tag_list;
+};
+
+struct tag_content {
+    struct list_head tag_list;
+    char url[SEND_BUFFER_SIZE];
 };
 
 
@@ -98,7 +104,7 @@ static _Bool tracedir(struct dir_context *dir_context,
         struct http_request *request =
             container_of(dir_context, struct http_request, dir_context);
         char buf[SEND_BUFFER_SIZE] = {0};
-        char *des = kmalloc(strlen(request->request_url) + strlen(name) + 2,
+        char *des = kmalloc(strlen(request->request_url) + strlen(name) + 3,
                             GFP_KERNEL);
         if (strcmp(request->request_url, "/") != 0) {
             strncpy(des, request->request_url, strlen(request->request_url));
@@ -107,9 +113,15 @@ static _Bool tracedir(struct dir_context *dir_context,
         } else {
             strncpy(des, name, strlen(name));
         }
-        printk("%s\n", des);
         snprintf(buf, SEND_BUFFER_SIZE,
                  "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", des, name);
+
+        struct tag_content *content =
+            kmalloc(sizeof(struct tag_content), GFP_KERNEL);
+        INIT_LIST_HEAD(&content->tag_list);
+        strncpy(content->url, buf, strlen(buf));
+        list_add_tail(&content->tag_list, request->tag_list);
+
         http_server_send(request->socket, buf, strlen(buf));
     }
 
@@ -169,7 +181,6 @@ static bool handle_directory(struct http_request *request)
     }
 
     catstr(pwd, daemon_list.dir_path, request->request_url);
-    printk("%s\n", pwd);
     fp = filp_open(pwd, O_RDONLY, 0);
 
     if (IS_ERR(fp)) {
@@ -200,10 +211,22 @@ static bool handle_directory(struct http_request *request)
                      request->request_url, "/..", "..");
 
         http_server_send(request->socket, buf, strlen(buf));
-        iterate_dir(fp, &request->dir_context);
 
-        hash_check(request->request_url);
-        hash_insert(request->request_url, buf);
+        struct list_head *head;
+        if (!hash_check(request->request_url, &head)) {
+            head = kmalloc(sizeof(struct list_head), GFP_KERNEL);
+            INIT_LIST_HEAD(head);
+            request->tag_list = head;
+            iterate_dir(fp, &request->dir_context);
+            hash_insert(request->request_url, head);
+        } else {
+            struct tag_content *now_content;
+            list_for_each_entry (now_content, head, tag_list) {
+                http_server_send(request->socket, now_content->url,
+                                 strlen(now_content->url));
+            }
+        }
+
 
         snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
         http_server_send(request->socket, buf, strlen(buf));
@@ -319,7 +342,6 @@ static void http_server_worker(struct work_struct *w)
     parser.data = &request;
     while (!kthread_should_stop()) {
         int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
-        printk("%s\n", buf);
         if (ret <= 0) {
             if (ret)
                 printk("recv error: %d\n", ret);
