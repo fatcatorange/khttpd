@@ -11,6 +11,7 @@
 
 #include "hash_content.h"
 #include "http_server.h"
+#include "timer.h"
 
 #define DEFAULT_PORT 8081
 #define DEFAULT_BACKLOG 100
@@ -164,7 +165,8 @@ static int __init khttpd_init(void)
 {
     init_hash_table();
     daemon_list.dir_path = WWWROOT;
-    printk("%s\n", daemon_list.dir_path);
+    int ret = pq_timer_init();
+    printk("%s %d\n", daemon_list.dir_path, ret);
     int err = open_listen_socket(port, backlog, &listen_socket);
     if (err < 0) {
         pr_err("can't open listen socket\n");

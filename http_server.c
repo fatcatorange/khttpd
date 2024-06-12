@@ -1,14 +1,15 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include "http_server.h"
 #include <linux/fs.h>
+#include <linux/jiffies.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/sched/signal.h>
-#include <linux/tcp.h>
-
+#include <linux/spinlock.h>
 #include "hash_content.h"
 #include "http_parser.h"
-#include "http_server.h"
+#include "timer.h"
 
 #define CRLF "\r\n"
 
@@ -36,10 +37,16 @@
 #define RECV_BUFFER_SIZE 4096
 #define SEND_BUFFER_SIZE 256
 #define BUFFER_SIZE 256
+#define TIME_OUT 10000
 
 struct khttpd_service daemon_list = {.is_stopped = false};
+static struct task_struct *expire_check;
 extern struct workqueue_struct *khttpd_wq;
 
+struct tag_content {
+    struct list_head tag_list;
+    char url[SEND_BUFFER_SIZE];
+};
 
 struct http_request {
     struct socket *socket;
@@ -50,14 +57,8 @@ struct http_request {
     struct list_head node;
     struct work_struct khttpd_work;
     struct list_head *tag_list;
+    timer_node *t_node;
 };
-
-struct tag_content {
-    struct list_head tag_list;
-    char url[SEND_BUFFER_SIZE];
-};
-
-
 
 static int http_server_recv(struct socket *sock, char *buf, size_t size)
 {
@@ -114,7 +115,8 @@ static _Bool tracedir(struct dir_context *dir_context,
             strncpy(des, name, strlen(name));
         }
         snprintf(buf, SEND_BUFFER_SIZE,
-                 "<tr><td><a href=\"%s\">%s</a></td></tr>\r\n", des, name);
+                 "%lx\r\n<tr><td><a href=\"%s\">%s</a></td></tr>\r\n",
+                 34 + strlen(des) + strlen(name), des, name);
 
         struct tag_content *content =
             kmalloc(sizeof(struct tag_content), GFP_KERNEL);
@@ -196,23 +198,25 @@ static bool handle_directory(struct http_request *request)
         char buf[SEND_BUFFER_SIZE] = {0};
         snprintf(buf, SEND_BUFFER_SIZE, "HTTP/1.1 200 OK\r\n%s%s%s",
                  "Connection: Keep-Alive\r\n", "Content-Type: text/html\r\n",
-                 "Keep-Alive: timeout=5, max=1000\r\n\r\n");
+                 "Transfer-Encoding: chunked\r\n\r\n");
         http_server_send(request->socket, buf, strlen(buf));
 
-        snprintf(buf, SEND_BUFFER_SIZE, "%s%s%s%s", "<html><head><style>\r\n",
-                 "body{font-family: monospace; font-size: 15px;}\r\n",
-                 "td {padding: 1.5px 6px;}\r\n",
-                 "</style></head><body><table>\r\n");
+        snprintf(
+            buf, SEND_BUFFER_SIZE, "7B\r\n%s%s%s%s", "<html><head><style>\r\n",
+            "body{font-family: monospace; font-size: 15px;}\r\n",
+            "td {padding: 1.5px 6px;}\r\n", "</style></head><body><table>\r\n");
         http_server_send(request->socket, buf, strlen(buf));
 
-        if (strcmp(request->request_url, ""))
+        if (strcmp(request->request_url, "")) {
             snprintf(buf, SEND_BUFFER_SIZE,
-                     "<tr><td><a href=\"%s%s\">%s</a></td></tr>\r\n",
-                     request->request_url, "/..", "..");
-
-        http_server_send(request->socket, buf, strlen(buf));
+                     "%lx\r\n<tr><td><a href=\"%s%s\">..</a></td></tr>\r\n",
+                     36 + strlen(request->request_url) + 4,
+                     request->request_url, "/../");
+            http_server_send(request->socket, buf, strlen(buf));
+        }
 
         struct list_head *head;
+        printk("%s\n", request->request_url);
         if (!hash_check(request->request_url, &head)) {
             head = kmalloc(sizeof(struct list_head), GFP_KERNEL);
             INIT_LIST_HEAD(head);
@@ -228,8 +232,10 @@ static bool handle_directory(struct http_request *request)
         }
 
 
-        snprintf(buf, SEND_BUFFER_SIZE, "</table></body></html>\r\n");
+        snprintf(buf, SEND_BUFFER_SIZE, "16\r\n</table></body></html>\r\n");
         http_server_send(request->socket, buf, strlen(buf));
+        http_server_send(request->socket, "0\r\n\r\n\r\n",
+                         strlen("0\r\n\r\n\r\n"));
 
     } else if (S_ISREG(fp->f_inode->i_mode)) {
         char *read_data = kmalloc(fp->f_inode->i_size, GFP_KERNEL);
@@ -240,8 +246,9 @@ static bool handle_directory(struct http_request *request)
                          "Close");
         http_server_send(request->socket, read_data, ret);
         kfree(read_data);
+        kernel_sock_shutdown(request->socket, SHUT_RDWR);
     }
-    kernel_sock_shutdown(request->socket, SHUT_RDWR);
+    //
     filp_close(fp, NULL);
     return true;
 }
@@ -312,6 +319,12 @@ static int http_parser_callback_message_complete(http_parser *parser)
     return 0;
 }
 
+int clear_socket(struct socket *socket)
+{
+    kernel_sock_shutdown(socket, SHUT_RD);
+    return 0;
+}
+
 static void http_server_worker(struct work_struct *w)
 {
     char *buf;
@@ -336,22 +349,29 @@ static void http_server_worker(struct work_struct *w)
         printk("can't allocate memory!\n");
         return;
     }
-
     request.socket = socket;
     http_parser_init(&parser, HTTP_REQUEST);
     parser.data = &request;
+    timer_node *t_node = add_pq_timer(request.socket, TIME_OUT, clear_socket);
+
     while (!kthread_should_stop()) {
         int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
-            if (ret)
-                printk("recv error: %d\n", ret);
+            printk("%p disconnected!", socket);
             break;
         }
+        // printk("%s\n", buf);
+        // printk("%p %p\n", socket, t_node);
+        // t_node->deleted = true;
+        del_pq_timer(t_node);
+        t_node = add_pq_timer(request.socket, TIME_OUT, clear_socket);
         http_parser_execute(&parser, &setting, buf, ret);
         if (request.complete && !http_should_keep_alive(&parser))
             break;
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
+
+
     kernel_sock_shutdown(socket, SHUT_RDWR);
     sock_release(socket);
     kfree(buf);
@@ -375,19 +395,26 @@ static struct work_struct *create_work(struct socket *sk)
 {
     struct http_request *work;
 
-    // 分配 http_request 結構大小的空間
-    // GFP_KERNEL: 正常配置記憶體
+
     if (!(work = kmalloc(sizeof(struct http_request), GFP_KERNEL)))
         return NULL;
 
     work->socket = sk;
 
-    // 初始化已經建立的 work ，並運行函式 http_server_worker
     INIT_WORK(&work->khttpd_work, http_server_worker);
 
     list_add(&work->node, &daemon_list.head);
 
     return &work->khttpd_work;
+}
+
+int handle_expire(void *arg)
+{
+    while (!kthread_should_stop()) {
+        handle_expired_timers();
+        msleep(1000);
+    }
+    return 0;
 }
 
 int http_server_daemon(void *arg)
@@ -400,6 +427,14 @@ int http_server_daemon(void *arg)
     allow_signal(SIGTERM);
 
     INIT_LIST_HEAD(&daemon_list.head);
+
+    expire_check = kthread_run(handle_expire, NULL, KBUILD_MODNAME);
+
+    if (IS_ERR(expire_check)) {
+        pr_err("can't start expire check\n");
+        return PTR_ERR(expire_check);
+    }
+
 
     while (!kthread_should_stop()) {
         int err = kernel_accept(param->listen_socket, &socket, 0);
