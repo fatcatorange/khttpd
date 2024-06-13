@@ -45,6 +45,7 @@ static inline void *prio_queue_min(prio_queue_t *ptr)
 
 static bool resize(prio_queue_t *ptr, size_t new_size)
 {
+    printk("start resize");
     void **new_ptr = kmalloc(sizeof(void *) * new_size, GFP_KERNEL);
     if (!new_ptr) {
         printk("malloc failed in resize!");
@@ -55,6 +56,7 @@ static bool resize(prio_queue_t *ptr, size_t new_size)
     kfree(ptr->priv);
     ptr->priv = new_ptr;
     ptr->size = new_size;
+    printk("end resize");
     return true;
 }
 
@@ -76,16 +78,16 @@ static inline void pq_swim(prio_queue_t *ptr, size_t k)
 static size_t pq_sink(prio_queue_t *ptr, size_t k)
 {
     size_t nalloc = ptr->nalloc;
-
     while (2 * k <= nalloc) {
         size_t j = 2 * k;
-        if (j < nalloc && ptr->comp(ptr->priv[j + 1], ptr->priv[j]))
+        if (ptr->comp(ptr->priv[j + 1], ptr->priv[j]))
             j++;
         if (!ptr->comp(ptr->priv[j], ptr->priv[k]))
             break;
         pq_swap(ptr, j, k);
         k = j;
     }
+
 
     return k;
 }
@@ -94,15 +96,12 @@ static bool prio_queue_delmin(prio_queue_t *ptr)
 {
     if (prio_queue_is_empty(ptr))
         return true;
-
+    printk("start delmin");
     pq_swap(ptr, 1, ptr->nalloc);
+    printk("start sink");
     ptr->nalloc--;
     pq_sink(ptr, 1);
-    if (ptr->nalloc > 0 && ptr->nalloc <= (ptr->size - 1) / 4) {
-        if (!resize(ptr, ptr->size / 2))
-            return false;
-    }
-
+    printk("finished sink");
     return true;
 }
 
@@ -139,6 +138,7 @@ static void time_update(void)
 int pq_timer_init()
 {
     bool ret = prio_queue_init(&timer, timer_comp, PQ_DEFAULT_SIZE);
+    printk("init timer:%d", ret);
     spin_lock_init(&timer.spinlock);
     time_update();
     return 0;
@@ -161,7 +161,6 @@ void handle_expired_timers()
             kfree(node);
             continue;
         }
-        printk("time: %ld %ld\n", node->key, current_msec);
         if (node->key > current_msec) {
             spin_unlock(&timer.spinlock);
             return;
@@ -170,18 +169,17 @@ void handle_expired_timers()
         printk("node = null? %d\n", node == NULL);
 
         if (node->callback) {
-            node->callback(node->socket);
+            node->callback(node->object);
         }
-
+        printk("clear socket!");
         ret = prio_queue_delmin(&timer);
+        printk("delmin!");
         kfree(node);
     }
     spin_unlock(&timer.spinlock);
 }
 
-timer_node *add_pq_timer(struct socket *socket,
-                         size_t timeout,
-                         timer_callback cb)
+timer_node *add_pq_timer(void *object, size_t timeout, timer_callback cb)
 {
     spin_lock(&timer.spinlock);
     timer_node *node = kmalloc(sizeof(timer_node), GFP_KERNEL);
@@ -194,7 +192,7 @@ timer_node *add_pq_timer(struct socket *socket,
     node->key = current_msec + timeout;
     node->deleted = false;
     node->callback = cb;
-    node->socket = socket;
+    node->object = object;
 
     prio_queue_insert(&timer, node);
     spin_unlock(&timer.spinlock);
@@ -203,6 +201,8 @@ timer_node *add_pq_timer(struct socket *socket,
 
 void del_pq_timer(timer_node *t_node)
 {
+    spin_lock(&timer.spinlock);
     if (t_node)
         t_node->deleted = true;
+    spin_unlock(&timer.spinlock);
 }

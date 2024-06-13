@@ -24,6 +24,6 @@ extern int kthread_start_check(void);
 
 extern int kthread_end_check(void *data);
 
-int clear_socket(struct socket *socket);
+int clear_socket(void *socket);
 
 #endif

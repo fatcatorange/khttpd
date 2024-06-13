@@ -9,7 +9,6 @@
 #include <linux/spinlock.h>
 #include "hash_content.h"
 #include "http_parser.h"
-#include "timer.h"
 
 #define CRLF "\r\n"
 
@@ -38,6 +37,7 @@
 #define SEND_BUFFER_SIZE 256
 #define BUFFER_SIZE 256
 #define TIME_OUT 10000
+
 
 struct khttpd_service daemon_list = {.is_stopped = false};
 static struct task_struct *expire_check;
@@ -223,9 +223,12 @@ static bool handle_directory(struct http_request *request)
             request->tag_list = head;
             iterate_dir(fp, &request->dir_context);
             hash_insert(request->request_url, head);
+
+            struct tag_content *now_content;
         } else {
             struct tag_content *now_content;
             list_for_each_entry (now_content, head, tag_list) {
+                printk("%s\n", now_content->url);
                 http_server_send(request->socket, now_content->url,
                                  strlen(now_content->url));
             }
@@ -319,9 +322,12 @@ static int http_parser_callback_message_complete(http_parser *parser)
     return 0;
 }
 
-int clear_socket(struct socket *socket)
+int clear_socket(void *socket)
 {
-    kernel_sock_shutdown(socket, SHUT_RD);
+    if (socket) {
+        printk("need clear");
+        kernel_sock_shutdown((struct socket *) socket, SHUT_RDWR);
+    }
     return 0;
 }
 
@@ -355,23 +361,28 @@ static void http_server_worker(struct work_struct *w)
     timer_node *t_node = add_pq_timer(request.socket, TIME_OUT, clear_socket);
 
     while (!kthread_should_stop()) {
+        printk("checking...");
         int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
             printk("%p disconnected!", socket);
-            break;
+            del_pq_timer(t_node);
+            kernel_sock_shutdown(socket, SHUT_RDWR);
+            sock_release(socket);
+            return;
         }
-        // printk("%s\n", buf);
-        // printk("%p %p\n", socket, t_node);
-        // t_node->deleted = true;
+        printk("buffer:%s\n", buf);
         del_pq_timer(t_node);
         t_node = add_pq_timer(request.socket, TIME_OUT, clear_socket);
         http_parser_execute(&parser, &setting, buf, ret);
-        if (request.complete && !http_should_keep_alive(&parser))
+        if (request.complete && !http_should_keep_alive(&parser)) {
+            printk("shouldn't keep alive!");
             break;
+        }
+
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
-
-
+    printk("out!");
+    del_pq_timer(t_node);
     kernel_sock_shutdown(socket, SHUT_RDWR);
     sock_release(socket);
     kfree(buf);

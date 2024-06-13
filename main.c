@@ -11,7 +11,6 @@
 
 #include "hash_content.h"
 #include "http_server.h"
-#include "timer.h"
 
 #define DEFAULT_PORT 8081
 #define DEFAULT_BACKLOG 100
