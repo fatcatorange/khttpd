@@ -4,7 +4,7 @@
 #include <linux/slab.h>
 #include "timer.h"
 
-#define CACHE_TIME_OUT 10000
+#define CACHE_TIME_OUT 20000
 
 struct hash_content {
     struct list_head *head;

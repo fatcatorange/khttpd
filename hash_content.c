@@ -29,6 +29,7 @@ void hash_insert(const char *request, struct list_head *head)
     hash_add_rcu(ht, &content->node, key);
     spin_unlock(&cache_lock);
     content->timer = add_pq_timer(content, CACHE_TIME_OUT, hash_delete);
+    synchronize_rcu();
 }
 
 int hash_delete(void *con)
@@ -40,10 +41,12 @@ int hash_delete(void *con)
     struct tag_content *tmp;
     list_for_each_entry_safe (now, tmp, content->head, tag_list) {
         list_del_rcu(&now->tag_list);
+        synchronize_rcu();
         kfree(now);
     }
-    kfree(content);
     spin_unlock(&cache_lock);
+    synchronize_rcu();
+    kfree(content);
     return 0;
 }
 

@@ -159,6 +159,7 @@ void handle_expired_timers()
             ret = prio_queue_delmin(&timer);
             printk("del min: %d\n", ret);
             kfree(node);
+            printk("end del min!");
             continue;
         }
         if (node->key > current_msec) {
