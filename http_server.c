@@ -9,7 +9,6 @@
 #include <linux/spinlock.h>
 #include "hash_content.h"
 #include "http_parser.h"
-#include "timer.h"
 
 #define CRLF "\r\n"
 
@@ -319,9 +318,12 @@ static int http_parser_callback_message_complete(http_parser *parser)
     return 0;
 }
 
-int clear_socket(struct socket *socket)
+int clear_socket(void *socket)
 {
-    kernel_sock_shutdown(socket, SHUT_RD);
+    if (socket) {
+        printk("need clear");
+        kernel_sock_shutdown((struct socket *) socket, SHUT_RDWR);
+    }
     return 0;
 }
 
@@ -358,7 +360,10 @@ static void http_server_worker(struct work_struct *w)
         int ret = http_server_recv(socket, buf, RECV_BUFFER_SIZE - 1);
         if (ret <= 0) {
             printk("%p disconnected!", socket);
-            break;
+            del_pq_timer(t_node);
+            kernel_sock_shutdown(socket, SHUT_RDWR);
+            sock_release(socket);
+            return;
         }
         // printk("%s\n", buf);
         // printk("%p %p\n", socket, t_node);
@@ -371,7 +376,7 @@ static void http_server_worker(struct work_struct *w)
         memset(buf, 0, RECV_BUFFER_SIZE);
     }
 
-
+    del_pq_timer(t_node);
     kernel_sock_shutdown(socket, SHUT_RDWR);
     sock_release(socket);
     kfree(buf);

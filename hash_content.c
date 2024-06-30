@@ -3,7 +3,7 @@
 #define SEND_BUFFER_SIZE 256
 
 DEFINE_HASHTABLE(ht, 8);
-
+spinlock_t cache_lock;
 
 struct tag_content {
     struct list_head tag_list;
@@ -24,7 +24,25 @@ void hash_insert(const char *request, struct list_head *head)
     content->head = head;
     content->request = kmalloc(strlen(request) + 1, GFP_KERNEL);
     memcpy(content->request, request, strlen(request) + 1);
+    content->timer = add_pq_timer(content, CACHE_TIME_OUT, hash_delete);
     hash_add_rcu(ht, &content->node, key);
+}
+
+int hash_delete(void *con)
+{
+    spin_lock(&cache_lock);
+    struct hash_content *content = (struct hash_content *) con;
+    hlist_del_rcu(&content->node);
+    struct tag_content *now;
+    struct tag_content *tmp;
+    spin_unlock(&cache_lock);
+    synchronize_rcu();
+    list_for_each_entry_safe (now, tmp, content->head, tag_list) {
+        list_del(&now->tag_list);
+        kfree(now);
+    }
+    kfree(content);
+    return 0;
 }
 
 bool hash_check(const char *request, struct list_head **head)
@@ -37,6 +55,8 @@ bool hash_check(const char *request, struct list_head **head)
     {
         if (strcmp(request, now->request) == 0) {
             *head = now->head;
+            del_pq_timer(now->timer);
+            now->timer = add_pq_timer(now, CACHE_TIME_OUT, hash_delete);
             rcu_read_unlock();
             return true;
         }
